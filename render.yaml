@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: dat-company-hub
+    env: node
+    repo: https://github.com/Dat-fptvn/Dat.CompanyHub
+    branch: master
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
