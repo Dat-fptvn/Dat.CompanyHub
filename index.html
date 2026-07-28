@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="vi">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Company Hub</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<section class="auth-screen" id="authScreen">
+  <div class="auth-card"><div class="auth-logo"><span class="brand-mark">✦</span> Company Hub</div><p class="eyebrow">CỔNG THÔNG TIN NỘI BỘ</p><h1 id="authTitle">Đăng nhập</h1><p class="auth-copy" id="authCopy">Đăng nhập để truy cập không gian làm việc của bạn.</p>
+    <form id="authForm"><label id="nameField" class="hidden">Họ và tên<input id="authName" placeholder="Ví dụ: Đạt FPT"></label><label>Email công ty<input id="authEmail" type="email" required placeholder="name@company.vn"></label><label>Mật khẩu<input id="authPassword" type="password" required minlength="4" placeholder="Tối thiểu 4 ký tự"></label><button class="primary-button auth-submit" type="submit" id="authSubmit">Đăng nhập</button></form>
+    <p class="auth-switch" id="authSwitch">Chưa có tài khoản? <button id="showRegister">Đăng ký ngay</button></p><p class="auth-help">Tài khoản demo: <strong>dat@fpt.vn</strong> / <strong>1234</strong></p>
+  </div>
+</section>
+<div class="app-shell">
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-mark">✦</span> Company Hub</div>
+    <button class="new-button" data-view="ticket">＋ Tạo yêu cầu mới</button>
+    <nav class="nav-menu">
+      <button class="nav-item active" data-view="dashboard">▦ Tổng quan</button>
+      <button class="nav-item" data-view="chat">◉ Trợ lý AI</button>
+      <button class="nav-item" data-view="documents">▣ Tài liệu <b id="documentCount">3</b></button>
+      <button class="nav-item" data-view="employees">♙ Nhân sự</button>
+      <button class="nav-item" data-view="announcements">◈ Thông báo <b id="announcementCount">2</b></button>
+      <button class="nav-item" data-view="ticket">☑ Yêu cầu hỗ trợ</button>
+      <button class="nav-item" data-view="admin">⚙ Quản trị</button>
+    </nav>
+    <div class="profile"><div class="avatar" id="profileInitial">ĐF</div><div><strong id="profileName">Đạt FPT</strong><small>Quản trị viên · IT</small></div><button id="logoutButton" title="Đăng xuất">↪</button></div>
+  </aside>
+
+  <main class="content">
+    <header><div><p class="eyebrow" id="sectionLabel">KHÔNG GIAN LÀM VIỆC</p><h1 id="pageTitle">Chào buổi sáng, Đạt FPT!</h1></div><div class="header-actions"><button class="icon-button" id="themeToggle" title="Đổi giao diện">◐</button><button class="notification-button" data-view="announcements">♢<i></i></button></div></header>
+
+    <section class="view active-view" id="dashboard">
+      <div class="stats"><article><span>☷</span><p>Tài liệu nội bộ</p><strong id="statDocuments">3</strong><small>Đã lập chỉ mục</small></article><article><span>◷</span><p>Yêu cầu đang xử lý</p><strong id="statTickets">2</strong><small>Ưu tiên phản hồi</small></article><article><span>♙</span><p>Nhân viên</p><strong>48</strong><small>Đang hoạt động</small></article></div>
+      <div class="two-column"><article class="card"><div class="card-title"><h2>Thông báo mới</h2><button data-view="announcements">Xem tất cả</button></div><div id="dashboardAnnouncements"></div></article><article class="card"><div class="card-title"><h2>Truy cập nhanh</h2></div><div class="quick-links"><button data-view="chat">✦<span>Hỏi trợ lý AI</span></button><button data-view="documents">▣<span>Tra cứu tài liệu</span></button><button data-view="ticket">＋<span>Tạo yêu cầu</span></button><button data-view="employees">♙<span>Danh bạ nhân sự</span></button></div></article></div>
+      <article class="card activity"><div class="card-title"><h2>Hoạt động gần đây</h2></div><div id="activityFeed"></div></article>
+    </section>
+
+    <section class="view" id="chat"><div class="chat-layout"><div class="chat-panel"><div class="messages" id="messages"><article class="message bot"><div class="bot-icon">✦</div><div><div class="bubble">Xin chào! Tôi có thể giúp bạn tra cứu chính sách, quy trình và tài liệu nội bộ.</div></div></article></div><div class="suggestions"><button>Chính sách nghỉ phép?</button><button>Quy trình cấp thiết bị?</button><button>Chế độ làm việc từ xa?</button></div><form id="chatForm" class="composer"><input id="question" autocomplete="off" placeholder="Nhập câu hỏi của bạn..."><button type="submit">➜</button></form><p class="notice">AI chỉ trả lời theo tài liệu nội bộ đã được lập chỉ mục.</p></div><aside class="chat-history"><h3>Lịch sử trò chuyện</h3><div id="historyList"><p>Chưa có câu hỏi nào.</p></div></aside></div></section>
+
+    <section class="view" id="documents"><div class="page-actions"><input class="search" id="documentSearch" placeholder="⌕  Tìm tài liệu..."><label class="primary-button">＋ Tải tài liệu<input id="fileInput" type="file" multiple accept=".pdf,.doc,.docx,.txt"></label></div><div class="dropzone" id="dropzone">Kéo thả tài liệu vào đây hoặc nhấn “Tải tài liệu”<small>Hỗ trợ PDF, DOCX, TXT</small></div><div class="table-card"><table><thead><tr><th>TÊN TÀI LIỆU</th><th>TRẠNG THÁI</th><th>NGÀY TẢI</th><th></th></tr></thead><tbody id="documentList"></tbody></table></div></section>
+
+    <section class="view" id="employees"><div class="page-actions"><input class="search" id="employeeSearch" placeholder="⌕  Tìm tên, phòng ban hoặc chức vụ..."><button class="primary-button" id="addEmployee">＋ Thêm nhân viên</button></div><div class="employee-grid" id="employeeList"></div></section>
+
+    <section class="view" id="announcements"><div class="page-actions"><p class="page-note">Thông tin mới nhất từ công ty</p><button class="primary-button" id="addAnnouncement">＋ Đăng thông báo</button></div><div class="announcement-list" id="announcementList"></div></section>
+
+    <section class="view" id="ticket"><div class="ticket-layout"><form class="card request-form" id="ticketForm"><h2>Tạo yêu cầu hỗ trợ</h2><label>Tiêu đề<input required id="ticketTitle" placeholder="Ví dụ: Cần cấp máy tính mới"></label><label>Loại yêu cầu<select id="ticketType"><option>Hỗ trợ IT</option><option>Nhân sự</option><option>Hành chính</option><option>Khác</option></select></label><label>Mức độ ưu tiên<select id="ticketPriority"><option>Bình thường</option><option>Cao</option><option>Khẩn cấp</option></select></label><label>Mô tả<textarea id="ticketDescription" required placeholder="Mô tả chi tiết yêu cầu của bạn..."></textarea></label><button class="primary-button" type="submit">Gửi yêu cầu</button></form><article class="card"><div class="card-title"><h2>Yêu cầu của bạn</h2></div><div id="ticketList"></div></article></div></section>
+
+    <section class="view" id="admin"><div class="admin-grid"><article class="card"><h2>Phân quyền người dùng</h2><p>Quản lý quyền truy cập vào tài liệu và chức năng trong hệ thống.</p><label>Vai trò hiện tại<select id="roleSelect"><option>Quản trị viên</option><option>Quản lý</option><option>Nhân viên</option></select></label><button class="primary-button" id="saveRole">Lưu phân quyền</button><p class="success-message" id="roleMessage"></p></article><article class="card"><h2>Cài đặt trợ lý AI</h2><label>Phong cách trả lời<select id="tone"><option>Ngắn gọn, chuyên nghiệp</option><option>Thân thiện, dễ hiểu</option><option>Chi tiết</option></select></label><label class="check-row"><input id="citations" type="checkbox" checked> Luôn hiển thị nguồn trích dẫn</label><button class="primary-button" id="saveSettings">Lưu cài đặt</button><p class="success-message" id="settingsMessage"></p></article></div></section>
+  </main>
+</div><script src="app.js"></script></body></html>

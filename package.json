@@ -1,0 +1,12 @@
+{
+  "name": "rag-chatbot-demo",
+  "version": "1.0.0",
+  "description": "Company Hub demo with local persistence",
+  "main": "api_server.js",
+  "scripts": {
+    "start": "node api_server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
