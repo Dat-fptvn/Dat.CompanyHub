@@ -48,23 +48,34 @@ rag-chatbot-demo/
 
 Dữ liệu tạo trong demo được lưu bằng `localStorage` của trình duyệt. Đây là bản frontend; để sử dụng thực tế cần thêm backend, đăng nhập thật, cơ sở dữ liệu, phân quyền máy chủ, mã hóa và tích hợp RAG/AI.
 
-## Lưu trữ dữ liệu chạy thật (SQLite)
+## Lưu trữ dữ liệu chạy thật (SQLite / PostgreSQL)
 
-API `api_server.js` hiện dùng SQLite tích hợp của Node.js để lưu tập trung người dùng, phiên đăng nhập và metadata tài liệu vào `data/company_hub.db`. File này tự được tạo khi chạy API và đã được loại khỏi Git.
+API `api_server.js` hiện có thể chạy với:
 
-Đăng nhập bằng tài khoản ban đầu: `dat@fpt.vn` / `1234`. Người dùng mới đăng ký được lưu vào SQLite; mật khẩu được băm bằng `scrypt` trước khi lưu.
+- SQLite local (`data/company_hub.db`) cho phát triển nhanh.
+- PostgreSQL khi `DATABASE_URL` được đặt trong môi trường.
+
+Nếu triển khai lên Render, bạn nên dùng PostgreSQL bền vững và cấu hình `DATABASE_URL` bằng service PostgreSQL của Render hoặc một database hosted khác.
+
+Người dùng mới đăng ký được lưu vào cơ sở dữ liệu với vai trò `member`; mật khẩu được băm bằng `scrypt` trước khi lưu.
+
+Dự án hiện có seed một tài khoản admin nội bộ chỉ để chạy thử; thông tin đăng nhập admin không được xuất bản trong tài liệu này. Khi triển khai thật, hãy sử dụng PostgreSQL với `DATABASE_URL` và tạo tài khoản admin tùy chỉnh.
 
 Chạy dự án qua `http://localhost:8000`, không mở `index.html` trực tiếp, để xác thực và lưu tài liệu hoạt động đúng.
 
-## Phương án MySQL mở rộng
+## Phương án PostgreSQL bền vững
 
-Đã có file [database/schema.sql](database/schema.sql) tạo các bảng `users`, `roles` và `user_sessions` nếu sau này cần chuyển lên MySQL.
+API `api_server.js` hiện hỗ trợ:
 
-1. Mở MySQL Workbench hoặc phpMyAdmin.
-2. Chạy toàn bộ file `database/schema.sql`.
-3. Sao chép `.env.example` thành `.env` và điền cấu hình MySQL.
-4. Khi làm backend thật, API đăng ký phải băm mật khẩu (bcrypt/argon2) trước khi ghi vào `users.password_hash`; không lưu mật khẩu thô.
+- SQLite local: dùng cho phát triển nhanh.
+- PostgreSQL: dùng biến môi trường `DATABASE_URL` để kết nối.
 
-Các truy vấn tham khảo cho đăng ký, đăng nhập và đăng xuất nằm trong [database/queries.sql](database/queries.sql).
+Để chạy trên Render với lưu trữ bền vững:
 
-Để chạy ngay trong MySQL Workbench, dùng file [company_hub_workbench.sql](company_hub_workbench.sql).
+1. Tạo PostgreSQL service (hoặc PostgreSQL addon) trên Render.
+2. Lấy connection string và đặt vào `DATABASE_URL`.
+3. Triển khai lại service để backend tự tạo schema và seed dữ liệu mẫu.
+
+Nếu bạn vẫn muốn giữ tài liệu MySQL cũ, các file trong `database/` là schema/queries tham chiếu cho MySQL, nhưng backend hiện tại mặc định chạy với PostgreSQL hoặc SQLite.
+
+Khi đưa lên production thật, luôn dùng `DATABASE_URL` thay vì file SQLite local, vì Render container có thể bị tái tạo và `data/company_hub.db` không đảm bảo bền lâu.
