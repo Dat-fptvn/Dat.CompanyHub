@@ -39,7 +39,8 @@ jobs:
           tar --exclude='./data/company_hub.db' \
               --exclude='./node_modules' \
               --exclude='./.git' \
-              -czf company-hub.tar.gz .
+              -czf "$RUNNER_TEMP/company-hub.tar.gz" .
+          cp "$RUNNER_TEMP/company-hub.tar.gz" ./company-hub.tar.gz
 
       - name: Deploy to Azure App Service
         uses: azure/webapps-deploy@v3
