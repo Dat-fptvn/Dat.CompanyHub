@@ -79,3 +79,15 @@ API `api_server.js` hiện hỗ trợ:
 Nếu bạn vẫn muốn giữ tài liệu MySQL cũ, các file trong `database/` là schema/queries tham chiếu cho MySQL, nhưng backend hiện tại mặc định chạy với PostgreSQL hoặc SQLite.
 
 Khi đưa lên production thật, luôn dùng `DATABASE_URL` thay vì file SQLite local, vì Render container có thể bị tái tạo và `data/company_hub.db` không đảm bảo bền lâu.
+
+## Deploy bằng GitHub Actions lên Azure App Service
+
+Workflow `.github/workflows/azure-app-service.yml` sẽ tự động kiểm tra mã nguồn và deploy khi push lên nhánh `master`.
+
+Trong GitHub repository, tạo Environment `production` rồi thêm:
+
+- Variable `AZURE_WEBAPP_NAME`: tên App Service Azure.
+- Secret `AZURE_WEBAPP_PUBLISH_PROFILE`: nội dung publish profile tải từ Azure App Service.
+- App Service setting `DATABASE_URL`: connection string của Azure Database for PostgreSQL.
+
+Không commit publish profile, mật khẩu hoặc `DATABASE_URL` vào source code.
