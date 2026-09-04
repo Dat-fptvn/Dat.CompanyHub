@@ -114,6 +114,8 @@ async function createSchema() {
       email TEXT NOT NULL UNIQUE COLLATE NOCASE,
       password_hash TEXT NOT NULL,
         role TEXT NOT NULL DEFAULT 'member',
+        approval_status TEXT NOT NULL DEFAULT 'approved',
+        approved_at TEXT,
         face_hash TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       last_login_at TEXT
@@ -166,14 +168,6 @@ async function createSchema() {
       created_by INTEGER,
       FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL
     );
-    CREATE TABLE IF NOT EXISTS notifications (
-      id SERIAL PRIMARY KEY,
-      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      title TEXT NOT NULL,
-      body TEXT NOT NULL,
-      is_read BOOLEAN NOT NULL DEFAULT FALSE,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
     CREATE TABLE IF NOT EXISTS employees (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -193,6 +187,8 @@ async function createSchema() {
       email TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'member',
+      approval_status TEXT NOT NULL DEFAULT 'approved',
+      approved_at TIMESTAMPTZ,
       face_hash TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       last_login_at TIMESTAMPTZ
@@ -280,6 +276,18 @@ async function createSchema() {
   } catch (e) {
     console.warn('Migration: could not ensure tickets.accepted_at column:', e.message);
   }
+  try {
+    if (usePostgres) {
+      await execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS approval_status TEXT NOT NULL DEFAULT 'approved'");
+      await execute('ALTER TABLE users ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ');
+    } else {
+      const cols = sqliteDb.prepare('PRAGMA table_info(users)').all();
+      if (!cols.find(c => c.name === 'approval_status')) sqliteDb.exec("ALTER TABLE users ADD COLUMN approval_status TEXT NOT NULL DEFAULT 'approved'");
+      if (!cols.find(c => c.name === 'approved_at')) sqliteDb.exec('ALTER TABLE users ADD COLUMN approved_at TEXT');
+    }
+  } catch (e) {
+    console.warn('Migration: could not ensure user approval columns:', e.message);
+  }
 }
 
 // Compute a simple perceptual average-hash (aHash) from a base64 JPEG data URL.
@@ -349,7 +357,8 @@ async function seedDatabase() {
   } else {
     await execute('UPDATE users SET role=$1 WHERE email=$2', ['admin', adminEmail]);
   }
-  await execute('UPDATE users SET role=$1 WHERE email<>$2', ['member', adminEmail]);
+  await execute('UPDATE users SET role=$1, approval_status=$2, approved_at=CURRENT_TIMESTAMP WHERE email=$3', ['admin', 'approved', adminEmail]);
+  await execute('UPDATE users SET role=$1 WHERE email<>$2 AND role=$3', ['member', adminEmail, 'admin']);
   const documentsCount = Number((await queryOne('SELECT COUNT(*) AS total FROM documents')).total);
   if (documentsCount === 0) {
     await insert('INSERT INTO documents (name,category) VALUES ($1,$2)', ['Sổ tay nhân viên 2026', 'Nhân sự']);
@@ -378,6 +387,7 @@ async function seedDatabase() {
 }
 
 function publicUser(user) { return { id: user.id, name: user.full_name, email: user.email, role: user.role }; }
+function publicPendingUser(user) { return { id: user.id, name: user.full_name, email: user.email, role: user.role, approval_status: user.approval_status, created_at: user.created_at, approved_at: user.approved_at || null }; }
 function publicTicket(row) { return { id: row.id, title: row.title, type: row.type, priority: row.priority, description: row.description || '', date: row.date, status: row.status, accepted_at: row.accepted_at || null }; }
 function publicAnnouncement(row) { return { id: row.id, title: row.title, body: row.body, date: row.date }; }
 function publicEmployee(row) { return { id: row.id, name: row.name, role: row.role, department: row.department, initial: row.initial }; }
@@ -395,7 +405,7 @@ async function currentUser(req) {
   if (!token) return null;
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
   return await queryOne(
-    `SELECT u.id,u.full_name,u.email,u.role
+    `SELECT u.id,u.full_name,u.email,u.role,u.approval_status
      FROM sessions s
      JOIN users u ON u.id=s.user_id
      WHERE s.token_hash=$1 AND s.expires_at > $2`,
@@ -414,7 +424,8 @@ function answer(question) {
 const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
 function json(res, status, payload) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type, Authorization', 'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS' }); res.end(JSON.stringify(payload)); }
 function readBody(req) { return new Promise((resolve, reject) => { let raw = ''; req.on('data', c => { raw += c; if (raw.length > 1e6) req.destroy(); }); req.on('end', () => { try { resolve(raw ? JSON.parse(raw) : {}); } catch { reject(new Error('JSON không hợp lệ')); } }); }); }
-async function requireUser(req, res) { const user = await currentUser(req); if (!user) { json(res, 401, { error: 'Vui lòng đăng nhập.' }); return null; } return user; }
+async function requireUser(req, res) { const user = await currentUser(req); if (!user) { json(res, 401, { error: 'Vui lòng đăng nhập.' }); return null; } if (user.approval_status !== 'approved') { json(res, 403, { error: 'Tài khoản chưa được admin cấp 1 duyệt.' }); return null; } return user; }
+async function requireAdmin(req, res) { const user = await requireUser(req, res); if (!user || user.role !== 'admin') { if (user) json(res, 403, { error: 'Chỉ admin cấp 1 được phép.' }); return null; } return user; }
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1').pathname;
@@ -428,8 +439,8 @@ const server = http.createServer(async (req, res) => {
       if (!name || !email || !password || password.length < 4) return json(res, 400, { error: 'Tên, email và mật khẩu từ 4 ký tự là bắt buộc.' });
       if (await queryOne('SELECT id FROM users WHERE email=$1', [String(email).trim().toLowerCase()])) return json(res, 409, { error: 'Email đã được đăng ký.' });
       const normalizedEmail = String(email).trim().toLowerCase();
-      const result = await insert('INSERT INTO users (full_name,email,password_hash,role) VALUES ($1,$2,$3,$4)', [String(name).trim(), normalizedEmail, hashPassword(password), 'member']);
-      const user = await queryOne('SELECT id,full_name,email,role FROM users WHERE id=$1', [result.lastInsertRowid]);
+      const result = await insert('INSERT INTO users (full_name,email,password_hash,role,approval_status) VALUES ($1,$2,$3,$4,$5)', [String(name).trim(), normalizedEmail, hashPassword(password), 'member', 'pending']);
+      const user = await queryOne('SELECT id,full_name,email,role,approval_status FROM users WHERE id=$1', [result.lastInsertRowid]);
       const adminUser = await queryOne('SELECT id FROM users WHERE email=$1 AND role=$2', ['dat@fpt.vn', 'admin']);
       if (adminUser) {
         await insert('INSERT INTO notifications (user_id,title,body) VALUES ($1,$2,$3)', [adminUser.id, 'Tài khoản mới đăng ký', `${user.full_name} (${normalizedEmail}) vừa đăng ký tài khoản thành viên.`]);
@@ -439,7 +450,7 @@ const server = http.createServer(async (req, res) => {
       } catch (emailError) {
         console.error('Registration email failed:', emailError.message);
       }
-      return json(res, 201, { user: publicUser(user), token: await makeToken(user.id) });
+      return json(res, 201, { user: publicUser(user), message: 'Đăng ký thành công. Tài khoản đang chờ admin cấp 1 duyệt.' });
     } catch (e) { return json(res, 400, { error: e.message }); }
   }
 
@@ -498,8 +509,9 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && url === '/api/auth/login') {
     try {
       const { email, password } = await readBody(req);
-      const user = await queryOne('SELECT id,full_name,email,password_hash,role FROM users WHERE email=$1', [String(email || '').trim().toLowerCase()]);
+      const user = await queryOne('SELECT id,full_name,email,password_hash,role,approval_status FROM users WHERE email=$1', [String(email || '').trim().toLowerCase()]);
       if (!user || !verifyPassword(String(password || ''), user.password_hash)) return json(res, 401, { error: 'Email hoặc mật khẩu chưa đúng.' });
+      if (user.approval_status !== 'approved') return json(res, 403, { error: 'Tài khoản đang chờ admin cấp 1 duyệt.' });
       await execute('UPDATE users SET last_login_at=CURRENT_TIMESTAMP WHERE id=$1', [user.id]);
       return json(res, 200, { user: publicUser(user), token: await makeToken(user.id) });
     } catch (e) { return json(res, 400, { error: e.message }); }
@@ -546,6 +558,29 @@ const server = http.createServer(async (req, res) => {
       ? await queryAll('SELECT id,title,body,is_read,created_at FROM notifications WHERE user_id=$1 ORDER BY id DESC', [user.id])
       : [];
     return json(res, 200, { documents, tickets: tickets.map(publicTicket), announcements: announcements.map(publicAnnouncement), employees: employees.map(publicEmployee), notifications });
+  }
+
+  if (req.method === 'GET' && url === '/api/admin/users') {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+    const users = await queryAll('SELECT id,full_name,email,role,approval_status,created_at,approved_at FROM users ORDER BY id DESC');
+    return json(res, 200, { users: users.map(publicPendingUser) });
+  }
+
+  if (req.method === 'PATCH' && url.startsWith('/api/admin/users/')) {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+    const userId = Number(url.split('/').pop());
+    if (!Number.isInteger(userId) || userId <= 0) return json(res, 400, { error: 'ID người dùng không hợp lệ.' });
+    try {
+      const { role = 'member', approval_status = 'approved' } = await readBody(req);
+      if (!['member', 'manager'].includes(role) || !['approved', 'rejected'].includes(approval_status)) return json(res, 400, { error: 'Quyền hoặc trạng thái không hợp lệ.' });
+      const target = await queryOne('SELECT id,email FROM users WHERE id=$1', [userId]);
+      if (!target || target.email === 'dat@fpt.vn') return json(res, 404, { error: 'Không thể thay đổi tài khoản này.' });
+      await execute('UPDATE users SET role=$1,approval_status=$2,approved_at=CURRENT_TIMESTAMP WHERE id=$3', [role, approval_status, userId]);
+      const updated = await queryOne('SELECT id,full_name,email,role,approval_status,created_at,approved_at FROM users WHERE id=$1', [userId]);
+      return json(res, 200, { user: publicPendingUser(updated) });
+    } catch (e) { return json(res, 400, { error: e.message }); }
   }
 
   if (req.method === 'GET' && url === '/api/documents') {
