@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const jpeg = require('jpeg-js');
+const nodemailer = require('nodemailer');
 const { DatabaseSync } = require('node:sqlite');
 const { Pool } = require('pg');
 
@@ -84,6 +85,27 @@ function verifyPassword(password, stored) {
   return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(candidate, 'hex'));
 }
 
+async function sendRegistrationEmail(user) {
+  const smtpUser = process.env.GMAIL_SMTP_USER;
+  const smtpPassword = process.env.GMAIL_SMTP_APP_PASSWORD;
+  const recipient = process.env.ADMIN_NOTIFICATION_EMAIL || 'dat104329@gmail.com';
+  if (!smtpUser || !smtpPassword) {
+    console.warn('Registration email skipped: GMAIL_SMTP_USER and GMAIL_SMTP_APP_PASSWORD are not configured.');
+    return false;
+  }
+  const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: { user: smtpUser, pass: smtpPassword }
+  });
+  await transporter.sendMail({
+    from: smtpUser,
+    to: recipient,
+    subject: 'Company Hub: Tài khoản mới đăng ký',
+    text: `Tài khoản mới vừa đăng ký Company Hub.\n\nHọ tên: ${user.full_name}\nEmail: ${user.email}\nVai trò: Thành viên`
+  });
+  return true;
+}
+
 async function createSchema() {
   const sqliteSchema = `
     CREATE TABLE IF NOT EXISTS users (
@@ -126,6 +148,15 @@ async function createSchema() {
       accepted_at TEXT,
       FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL
     );
+    CREATE TABLE IF NOT EXISTS notifications (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      is_read INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
     CREATE TABLE IF NOT EXISTS announcements (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       title TEXT NOT NULL,
@@ -134,6 +165,14 @@ async function createSchema() {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       created_by INTEGER,
       FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL
+    );
+    CREATE TABLE IF NOT EXISTS notifications (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      is_read BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS employees (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -153,7 +192,7 @@ async function createSchema() {
       full_name TEXT NOT NULL,
       email TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
-      role TEXT NOT NULL DEFAULT 'employee',
+      role TEXT NOT NULL DEFAULT 'member',
       face_hash TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       last_login_at TIMESTAMPTZ
@@ -292,13 +331,17 @@ function hammingDistanceHex(h1, h2) {
 }
 
 async function seedDatabase() {
-  const admin = await queryOne('SELECT id FROM users WHERE email=$1', ['dat@fpt.vn']);
+  const adminEmail = 'dat@fpt.vn';
+  const admin = await queryOne('SELECT id FROM users WHERE email=$1', [adminEmail]);
   if (!admin) {
     await insert(
       'INSERT INTO users (full_name,email,password_hash,role) VALUES ($1,$2,$3,$4)',
       ['Đạt FPT', 'dat@fpt.vn', hashPassword('1234'), 'admin']
     );
+  } else {
+    await execute('UPDATE users SET role=$1 WHERE email=$2', ['admin', adminEmail]);
   }
+  await execute('UPDATE users SET role=$1 WHERE email<>$2', ['member', adminEmail]);
   const documentsCount = Number((await queryOne('SELECT COUNT(*) AS total FROM documents')).total);
   if (documentsCount === 0) {
     await insert('INSERT INTO documents (name,category) VALUES ($1,$2)', ['Sổ tay nhân viên 2026', 'Nhân sự']);
@@ -376,8 +419,18 @@ const server = http.createServer(async (req, res) => {
       const { name, email, password } = await readBody(req);
       if (!name || !email || !password || password.length < 4) return json(res, 400, { error: 'Tên, email và mật khẩu từ 4 ký tự là bắt buộc.' });
       if (await queryOne('SELECT id FROM users WHERE email=$1', [String(email).trim().toLowerCase()])) return json(res, 409, { error: 'Email đã được đăng ký.' });
-      const result = await insert('INSERT INTO users (full_name,email,password_hash,role) VALUES ($1,$2,$3,$4)', [String(name).trim(), String(email).trim().toLowerCase(), hashPassword(password), 'member']);
+      const normalizedEmail = String(email).trim().toLowerCase();
+      const result = await insert('INSERT INTO users (full_name,email,password_hash,role) VALUES ($1,$2,$3,$4)', [String(name).trim(), normalizedEmail, hashPassword(password), 'member']);
       const user = await queryOne('SELECT id,full_name,email,role FROM users WHERE id=$1', [result.lastInsertRowid]);
+      const adminUser = await queryOne('SELECT id FROM users WHERE email=$1 AND role=$2', ['dat@fpt.vn', 'admin']);
+      if (adminUser) {
+        await insert('INSERT INTO notifications (user_id,title,body) VALUES ($1,$2,$3)', [adminUser.id, 'Tài khoản mới đăng ký', `${user.full_name} (${normalizedEmail}) vừa đăng ký tài khoản thành viên.`]);
+      }
+      try {
+        await sendRegistrationEmail(user);
+      } catch (emailError) {
+        console.error('Registration email failed:', emailError.message);
+      }
       return json(res, 201, { user: publicUser(user), token: await makeToken(user.id) });
     } catch (e) { return json(res, 400, { error: e.message }); }
   }
@@ -408,6 +461,11 @@ const server = http.createServer(async (req, res) => {
       if (!user) return json(res, 404, { error: 'Email chưa được đăng ký.' });
       let faceHash;
       try { faceHash = computeAHashFromDataUrl(faceImage); } catch (err) { return json(res, 400, { error: 'Không thể xử lý ảnh: ' + err.message }); }
+      const enrolledFaces = await queryAll('SELECT id,full_name FROM users WHERE face_hash IS NOT NULL AND id<>$1', [user.id]);
+      const duplicate = enrolledFaces.find(candidate => hammingDistanceHex(candidate.face_hash, faceHash) <= 20);
+      if (duplicate) {
+        return json(res, 409, { error: 'Khuôn mặt này đã được đăng ký cho một tài khoản khác. Mỗi khuôn mặt chỉ được liên kết với một tài khoản.' });
+      }
       await execute('UPDATE users SET face_hash=$1 WHERE id=$2', [faceHash, user.id]);
       return json(res, 200, { message: 'Đã lưu khuôn mặt thành công.' });
     } catch (e) { return json(res, 400, { error: e.message }); }
@@ -476,7 +534,10 @@ const server = http.createServer(async (req, res) => {
     const tickets = await queryAll('SELECT id,title,type,priority,description,date,status,accepted_at FROM tickets ORDER BY id DESC');
     const announcements = await queryAll('SELECT id,title,body,date FROM announcements ORDER BY id DESC');
     const employees = await queryAll('SELECT id,name,role,department,initial FROM employees ORDER BY id DESC');
-    return json(res, 200, { documents, tickets: tickets.map(publicTicket), announcements: announcements.map(publicAnnouncement), employees: employees.map(publicEmployee) });
+    const notifications = user.role === 'admin'
+      ? await queryAll('SELECT id,title,body,is_read,created_at FROM notifications WHERE user_id=$1 ORDER BY id DESC', [user.id])
+      : [];
+    return json(res, 200, { documents, tickets: tickets.map(publicTicket), announcements: announcements.map(publicAnnouncement), employees: employees.map(publicEmployee), notifications });
   }
 
   if (req.method === 'GET' && url === '/api/documents') {
