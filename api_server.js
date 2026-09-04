@@ -114,6 +114,7 @@ async function createSchema() {
       email TEXT NOT NULL UNIQUE COLLATE NOCASE,
       password_hash TEXT NOT NULL,
         role TEXT NOT NULL DEFAULT 'member',
+        position TEXT NOT NULL DEFAULT 'Nhân viên',
         approval_status TEXT NOT NULL DEFAULT 'approved',
         approved_at TEXT,
         face_hash TEXT,
@@ -176,6 +177,7 @@ async function createSchema() {
       initial TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       created_by INTEGER,
+      user_id INTEGER UNIQUE,
       FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL
     );
   `;
@@ -187,6 +189,7 @@ async function createSchema() {
       email TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'member',
+      position TEXT NOT NULL DEFAULT 'Nhân viên',
       approval_status TEXT NOT NULL DEFAULT 'approved',
       approved_at TIMESTAMPTZ,
       face_hash TEXT,
@@ -236,6 +239,7 @@ async function createSchema() {
       initial TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       created_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+      ,user_id INTEGER UNIQUE REFERENCES users(id) ON DELETE CASCADE
     );
     CREATE TABLE IF NOT EXISTS notifications (
       id SERIAL PRIMARY KEY,
@@ -280,14 +284,23 @@ async function createSchema() {
     if (usePostgres) {
       await execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS approval_status TEXT NOT NULL DEFAULT 'approved'");
       await execute('ALTER TABLE users ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ');
+      await execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS position TEXT NOT NULL DEFAULT 'Nhân viên'");
     } else {
       const cols = sqliteDb.prepare('PRAGMA table_info(users)').all();
       if (!cols.find(c => c.name === 'approval_status')) sqliteDb.exec("ALTER TABLE users ADD COLUMN approval_status TEXT NOT NULL DEFAULT 'approved'");
       if (!cols.find(c => c.name === 'approved_at')) sqliteDb.exec('ALTER TABLE users ADD COLUMN approved_at TEXT');
+      if (!cols.find(c => c.name === 'position')) sqliteDb.exec("ALTER TABLE users ADD COLUMN position TEXT NOT NULL DEFAULT 'Nhân viên'");
     }
   } catch (e) {
     console.warn('Migration: could not ensure user approval columns:', e.message);
   }
+  try {
+    if (usePostgres) await execute("ALTER TABLE employees ADD COLUMN IF NOT EXISTS user_id INTEGER UNIQUE REFERENCES users(id) ON DELETE CASCADE");
+    else {
+      const cols = sqliteDb.prepare('PRAGMA table_info(employees)').all();
+      if (!cols.find(c => c.name === 'user_id')) sqliteDb.exec('ALTER TABLE employees ADD COLUMN user_id INTEGER UNIQUE REFERENCES users(id) ON DELETE CASCADE');
+    }
+  } catch (e) { console.warn('Migration: could not ensure employee user link:', e.message); }
 }
 
 // Compute a simple perceptual average-hash (aHash) from a base64 JPEG data URL.
@@ -387,7 +400,7 @@ async function seedDatabase() {
 }
 
 function publicUser(user) { return { id: user.id, name: user.full_name, email: user.email, role: user.role }; }
-function publicPendingUser(user) { return { id: user.id, name: user.full_name, email: user.email, role: user.role, approval_status: user.approval_status, created_at: user.created_at, approved_at: user.approved_at || null }; }
+function publicPendingUser(user) { return { id: user.id, name: user.full_name, email: user.email, role: user.role, position: user.position || 'Nhân viên', approval_status: user.approval_status, created_at: user.created_at, approved_at: user.approved_at || null }; }
 function publicTicket(row) { return { id: row.id, title: row.title, type: row.type, priority: row.priority, description: row.description || '', date: row.date, status: row.status, accepted_at: row.accepted_at || null }; }
 function publicAnnouncement(row) { return { id: row.id, title: row.title, body: row.body, date: row.date }; }
 function publicEmployee(row) { return { id: row.id, name: row.name, role: row.role, department: row.department, initial: row.initial }; }
@@ -553,7 +566,12 @@ const server = http.createServer(async (req, res) => {
     const documents = await queryAll('SELECT id,name,category,status,created_at FROM documents ORDER BY id DESC');
     const tickets = await queryAll('SELECT id,title,type,priority,description,date,status,accepted_at FROM tickets ORDER BY id DESC');
     const announcements = await queryAll('SELECT id,title,body,date FROM announcements ORDER BY id DESC');
-    const employees = await queryAll('SELECT id,name,role,department,initial FROM employees ORDER BY id DESC');
+    const employees = await queryAll(`SELECT id,name,role,department,initial FROM employees
+      UNION ALL
+      SELECT u.id,u.full_name,u.position,'Chưa phân phòng',UPPER(SUBSTR(u.full_name,1,1)) FROM users u
+      WHERE u.approval_status='approved' AND u.email<>'dat@fpt.vn'
+        AND NOT EXISTS (SELECT 1 FROM employees e WHERE e.user_id=u.id)
+      ORDER BY id DESC`);
     const notifications = user.role === 'admin'
       ? await queryAll('SELECT id,title,body,is_read,created_at FROM notifications WHERE user_id=$1 ORDER BY id DESC', [user.id])
       : [];
@@ -563,7 +581,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url === '/api/admin/users') {
     const admin = await requireAdmin(req, res);
     if (!admin) return;
-    const users = await queryAll('SELECT id,full_name,email,role,approval_status,created_at,approved_at FROM users ORDER BY id DESC');
+    const users = await queryAll('SELECT id,full_name,email,role,position,approval_status,created_at,approved_at FROM users ORDER BY id DESC');
     return json(res, 200, { users: users.map(publicPendingUser) });
   }
 
@@ -573,14 +591,41 @@ const server = http.createServer(async (req, res) => {
     const userId = Number(url.split('/').pop());
     if (!Number.isInteger(userId) || userId <= 0) return json(res, 400, { error: 'ID người dùng không hợp lệ.' });
     try {
-      const { role = 'member', approval_status = 'approved' } = await readBody(req);
+      const { role = 'member', position = 'Nhân viên', approval_status = 'approved' } = await readBody(req);
       if (!['member', 'manager'].includes(role) || !['approved', 'rejected'].includes(approval_status)) return json(res, 400, { error: 'Quyền hoặc trạng thái không hợp lệ.' });
       const target = await queryOne('SELECT id,email FROM users WHERE id=$1', [userId]);
       if (!target || target.email === 'dat@fpt.vn') return json(res, 404, { error: 'Không thể thay đổi tài khoản này.' });
-      await execute('UPDATE users SET role=$1,approval_status=$2,approved_at=CURRENT_TIMESTAMP WHERE id=$3', [role, approval_status, userId]);
-      const updated = await queryOne('SELECT id,full_name,email,role,approval_status,created_at,approved_at FROM users WHERE id=$1', [userId]);
+      await execute('UPDATE users SET role=$1,position=$2,approval_status=$3,approved_at=CURRENT_TIMESTAMP WHERE id=$4', [role, String(position).trim() || 'Nhân viên', approval_status, userId]);
+      if (approval_status === 'approved') {
+        await execute(`INSERT INTO employees (name,role,department,initial,created_by,user_id)
+          SELECT full_name,position,'Chưa phân phòng',UPPER(SUBSTR(full_name,1,1)), $1, id FROM users
+          WHERE id=$1 AND NOT EXISTS (SELECT 1 FROM employees WHERE user_id=$1)`, [userId]);
+      }
+      const updated = await queryOne('SELECT id,full_name,email,role,position,approval_status,created_at,approved_at FROM users WHERE id=$1', [userId]);
       return json(res, 200, { user: publicPendingUser(updated) });
     } catch (e) { return json(res, 400, { error: e.message }); }
+  }
+
+  if (req.method === 'DELETE' && url.startsWith('/api/admin/users/')) {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+    const userId = Number(url.split('/').pop());
+    const target = await queryOne('SELECT id,email FROM users WHERE id=$1', [userId]);
+    if (!target || target.email === 'dat@fpt.vn') return json(res, 404, { error: 'Không thể xóa tài khoản này.' });
+    await execute('DELETE FROM users WHERE id=$1', [userId]);
+    return json(res, 200, { deleted: true });
+  }
+
+  if (req.method === 'POST' && url.startsWith('/api/admin/users/') && url.endsWith('/message')) {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+    const userId = Number(url.split('/')[4]);
+    const { message = '' } = await readBody(req);
+    if (!Number.isInteger(userId) || !String(message).trim()) return json(res, 400, { error: 'Nội dung tin nhắn là bắt buộc.' });
+    const target = await queryOne('SELECT id FROM users WHERE id=$1 AND email<>$2', [userId, 'dat@fpt.vn']);
+    if (!target) return json(res, 404, { error: 'Không tìm thấy tài khoản.' });
+    await insert('INSERT INTO notifications (user_id,title,body) VALUES ($1,$2,$3)', [userId, 'Tin nhắn riêng từ admin', String(message).trim()]);
+    return json(res, 201, { sent: true });
   }
 
   if (req.method === 'GET' && url === '/api/documents') {
