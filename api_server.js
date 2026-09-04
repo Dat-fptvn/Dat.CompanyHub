@@ -572,9 +572,7 @@ const server = http.createServer(async (req, res) => {
       WHERE u.approval_status='approved' AND u.email<>'dat@fpt.vn'
         AND NOT EXISTS (SELECT 1 FROM employees e WHERE e.user_id=u.id)
       ORDER BY id DESC`);
-    const notifications = user.role === 'admin'
-      ? await queryAll('SELECT id,title,body,is_read,created_at FROM notifications WHERE user_id=$1 ORDER BY id DESC', [user.id])
-      : [];
+    const notifications = await queryAll('SELECT id,title,body,is_read,created_at FROM notifications WHERE user_id=$1 ORDER BY id DESC', [user.id]);
     return json(res, 200, { documents, tickets: tickets.map(publicTicket), announcements: announcements.map(publicAnnouncement), employees: employees.map(publicEmployee), notifications });
   }
 
@@ -625,6 +623,17 @@ const server = http.createServer(async (req, res) => {
     const target = await queryOne('SELECT id FROM users WHERE id=$1 AND email<>$2', [userId, 'dat@fpt.vn']);
     if (!target) return json(res, 404, { error: 'Không tìm thấy tài khoản.' });
     await insert('INSERT INTO notifications (user_id,title,body) VALUES ($1,$2,$3)', [userId, 'Tin nhắn riêng từ admin', String(message).trim()]);
+    return json(res, 201, { sent: true });
+  }
+
+  if (req.method === 'POST' && url === '/api/notifications/reply') {
+    const user = await requireUser(req, res);
+    if (!user) return;
+    const { message = '' } = await readBody(req);
+    if (!String(message).trim()) return json(res, 400, { error: 'Nội dung trả lời là bắt buộc.' });
+    const admin = await queryOne('SELECT id FROM users WHERE email=$1', ['dat@fpt.vn']);
+    if (!admin) return json(res, 404, { error: 'Không tìm thấy admin.' });
+    await insert('INSERT INTO notifications (user_id,title,body) VALUES ($1,$2,$3)', [admin.id, `Phản hồi từ ${user.full_name}`, String(message).trim()]);
     return json(res, 201, { sent: true });
   }
 
