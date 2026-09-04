@@ -700,7 +700,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'POST' && url === '/api/employees') {
-    const user = await requireUser(req, res);
+    const user = await requireAdmin(req, res);
     if (!user) return;
     try {
       const { name, role = 'Nhân viên', department = 'Chưa xác định', initial = '' } = await readBody(req);
@@ -710,6 +710,21 @@ const server = http.createServer(async (req, res) => {
       const employee = await queryOne('SELECT id,name,role,department,initial FROM employees WHERE id=$1', [result.lastInsertRowid]);
       return json(res, 201, { employee: publicEmployee(employee) });
     } catch (e) { return json(res, 400, { error: e.message }); }
+  }
+
+  if (req.method === 'DELETE' && url.startsWith('/api/employees/')) {
+    const user = await requireAdmin(req, res);
+    if (!user) return;
+    const employeeId = Number(url.split('/').pop());
+    if (!Number.isInteger(employeeId) || employeeId <= 0) return json(res, 400, { error: 'ID nhân sự không hợp lệ.' });
+    const existing = await queryOne('SELECT id,user_id FROM employees WHERE id=$1', [employeeId]);
+    if (!existing) return json(res, 404, { error: 'Không tìm thấy nhân sự.' });
+    if (existing.user_id) {
+      await execute('DELETE FROM users WHERE id=$1 AND email<>$2', [existing.user_id, 'dat@fpt.vn']);
+    } else {
+      await execute('DELETE FROM employees WHERE id=$1', [employeeId]);
+    }
+    return json(res, 200, { deleted: true, id: employeeId });
   }
 
   if (req.method === 'POST' && url === '/api/chat') {
